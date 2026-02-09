@@ -140,6 +140,7 @@ async def get_daily_log(
         log_date=target_date,
         target_nutrients=target,
         actual_nutrients=actual,
+        deficits=deficits,
         hydration_water_ml=log_data["hydration_water_ml"] if log_data else 0,
         hydration_total_ml=log_data["hydration_total_ml"] if log_data else 0,
         caffeine_total_mg=actual.caffeine,

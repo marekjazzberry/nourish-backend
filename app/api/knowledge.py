@@ -58,12 +58,17 @@ async def search_articles(
             SELECT ka.slug, ka.title, ka.category, ka.summary, ka.tags,
                    COUNT(DISTINCT he.id) as effects_count,
                    COUNT(DISTINCT sr.id) as studies_count,
-                   similarity(ka.title || ' ' || ka.summary, :q) as sim
+                   GREATEST(
+                       word_similarity(:q, ka.title),
+                       word_similarity(:q, ka.summary)
+                   ) as sim
             FROM knowledge_articles ka
             LEFT JOIN health_effects he ON he.article_id = ka.id
             LEFT JOIN study_references sr ON sr.article_id = ka.id
             WHERE ka.is_published = TRUE
-              AND (ka.title || ' ' || ka.summary) % :q
+              AND (:q <% ka.title OR :q <% ka.summary
+                   OR ka.title ILIKE '%' || :q || '%'
+                   OR :q = ANY(ka.tags))
             GROUP BY ka.id
             ORDER BY sim DESC
             LIMIT 20

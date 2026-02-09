@@ -1,5 +1,8 @@
 """Nourish API — Chat mit Nourish-KI."""
 
+import re
+from datetime import date as date_type
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -8,6 +11,12 @@ from app.core.database import get_db
 from app.core.auth import get_current_user
 from app.models.schemas import ChatInput, ChatResponse
 from app.services.claude_service import chat_with_nourish
+from app.services.balance_service import (
+    aggregate_daily_nutrients,
+    calculate_target_nutrients,
+    calculate_deficits,
+    get_week_trends,
+)
 
 router = APIRouter()
 
@@ -31,9 +40,28 @@ async def send_chat_message(
     )
     history = [dict(row) for row in reversed(list(result.mappings()))]
 
-    # TODO: Echte Tagesbilanz und Wochentrends aus daily_logs laden
-    daily_balance = {}
-    week_trends = {}
+    # Echte Tagesbilanz laden
+    today = date_type.today()
+    actual = await aggregate_daily_nutrients(user["id"], today, db)
+    target = calculate_target_nutrients(user)
+    deficits = calculate_deficits(actual, target)
+
+    daily_balance = {
+        "actual": actual.model_dump(),
+        "target": target.model_dump(),
+        "deficits": {
+            k: v for k, v in deficits.items()
+            if v["status"] != "ok"
+        },
+    }
+
+    # Wochentrends laden (date-Objekte in Strings konvertieren fuer JSON)
+    raw_trends = await get_week_trends(user["id"], db)
+    week_trends = {
+        **raw_trends,
+        "start_date": str(raw_trends["start_date"]),
+        "end_date": str(raw_trends["end_date"]),
+    }
 
     # Claude Chat
     response_text = await chat_with_nourish(
@@ -55,5 +83,7 @@ async def send_chat_message(
     )
     await db.commit()
 
-    # TODO: Knowledge-Links aus der Antwort extrahieren
-    return ChatResponse(response=response_text, knowledge_links=[])
+    # Knowledge-Links aus der Antwort extrahieren ([Mehr ueber XYZ])
+    links = re.findall(r'\[Mehr (?:ueber|über) ([^\]]+)\]', response_text)
+
+    return ChatResponse(response=response_text, knowledge_links=links)

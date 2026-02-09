@@ -211,10 +211,17 @@ class ProductResponse(BaseModel):
 
 # ── Daily Log Schemas ──
 
+class NutrientStatus(BaseModel):
+    actual: float = 0
+    target: float = 0
+    percentage: float = 0
+    status: str = "ok"  # "deficit" | "ok" | "excess"
+
 class DailyLogResponse(BaseModel):
     log_date: date
     target_nutrients: Optional[NutrientProfile]
     actual_nutrients: Optional[NutrientProfile]
+    deficits: dict[str, NutrientStatus] = {}
     hydration_water_ml: int = 0
     hydration_total_ml: int = 0
     caffeine_total_mg: float = 0

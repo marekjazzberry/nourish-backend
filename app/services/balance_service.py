@@ -223,10 +223,17 @@ def calculate_deficits(
         if target_val > 0:
             percentage = round((actual_val / target_val) * 100, 1)
         else:
-            # Kein Zielwert definiert (z.B. Alkohol = 0)
+            # Zielwert = 0 (z.B. Alkohol, trans-Fette) — kein Defizit moeglich
             percentage = 0 if actual_val == 0 else 100
 
-        if percentage < 80:
+        # Felder mit Ziel 0 sind nie "deficit" (Alkohol, trans-Fette)
+        # Koffein ist ein Limit, kein Mindestziel — weniger ist besser
+        _limit_fields = {"caffeine", "alcohol", "fat_trans", "carbs_sugar"}
+        if target_val == 0 and actual_val == 0:
+            status = "ok"
+        elif field in _limit_fields and actual_val <= target_val:
+            status = "ok"
+        elif percentage < 80:
             status = "deficit"
         elif percentage > 120:
             status = "excess"
