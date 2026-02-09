@@ -11,7 +11,7 @@ from app.models.schemas import ProductCreate, ProductResponse
 router = APIRouter()
 
 
-@router.get("/", response_model=list[ProductResponse])
+@router.get("", response_model=list[ProductResponse])
 async def list_products(
     search: str = Query(default=None),
     user: dict = Depends(get_current_user),
@@ -35,7 +35,7 @@ async def list_products(
     return [dict(row) for row in result.mappings()]
 
 
-@router.post("/", response_model=ProductResponse)
+@router.post("", response_model=ProductResponse)
 async def create_product(
     body: ProductCreate,
     user: dict = Depends(get_current_user),

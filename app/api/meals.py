@@ -161,7 +161,7 @@ async def create_meal_text(
     return await _process_meal(parsed_items, meal_type, "text", body.text, user, db)
 
 
-@router.get("/", response_model=list[MealResponse])
+@router.get("", response_model=list[MealResponse])
 async def get_meals(
     meal_date: date_type = Query(default=None, alias="date"),
     user: dict = Depends(get_current_user),

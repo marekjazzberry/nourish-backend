@@ -21,7 +21,7 @@ from app.services.balance_service import (
 router = APIRouter()
 
 
-@router.post("/", response_model=ChatResponse)
+@router.post("", response_model=ChatResponse)
 async def send_chat_message(
     body: ChatInput,
     user: dict = Depends(get_current_user),

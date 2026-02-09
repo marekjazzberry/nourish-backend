@@ -25,6 +25,7 @@ app = FastAPI(
     description="Intelligentes Ernährungstracking mit KI-Beratung",
     version="0.1.0",
     lifespan=lifespan,
+    redirect_slashes=False,
 )
 
 # CORS

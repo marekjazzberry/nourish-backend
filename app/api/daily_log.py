@@ -19,7 +19,7 @@ from app.services.balance_service import (
 router = APIRouter()
 
 
-@router.get("/", response_model=DailyLogResponse)
+@router.get("", response_model=DailyLogResponse)
 async def get_daily_log(
     log_date: date = Query(default=None, alias="date"),
     user: dict = Depends(get_current_user),

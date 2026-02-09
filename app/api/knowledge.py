@@ -10,7 +10,7 @@ from app.models.schemas import KnowledgeArticleListItem, KnowledgeArticleRespons
 router = APIRouter()
 
 
-@router.get("/", response_model=list[KnowledgeArticleListItem])
+@router.get("", response_model=list[KnowledgeArticleListItem])
 async def list_articles(
     category: str = Query(default=None),
     tag: str = Query(default=None),
