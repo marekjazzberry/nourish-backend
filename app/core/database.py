@@ -1,6 +1,7 @@
 """Nourish Backend — Datenbankverbindung (Supabase/PostgreSQL)."""
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.pool import NullPool
 from supabase import create_client, Client
 
 from app.core.config import get_settings
@@ -18,9 +19,11 @@ def _get_engine():
         _engine = create_async_engine(
             settings.database_url,
             echo=settings.debug,
-            pool_size=10,
-            max_overflow=20,
-            connect_args={"statement_cache_size": 0},
+            poolclass=NullPool,
+            connect_args={
+                "statement_cache_size": 0,
+                "prepared_statement_cache_size": 0,
+            },
         )
     return _engine
 
