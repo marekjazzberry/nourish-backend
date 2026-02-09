@@ -84,16 +84,18 @@ async def get_current_user(
 ) -> dict:
     """
     FastAPI Dependency: Extrahiert und verifiziert den aktuellen Nutzer.
-    Für MVP: Einfaches Bearer Token = user_id (wird in Produktion ersetzt).
+    Dev-Token (dev-{user_id}): User-ID direkt extrahieren.
+    Produktion: Apple Identity Token verifizieren.
     """
     token = credentials.credentials
 
-    if settings.env == "development":
-        # Entwicklungsmodus: Token ist direkt die User-ID
+    if token.startswith("dev-"):
+        # Dev-Modus: User-ID aus Token extrahieren
+        user_id = token[4:]  # "dev-" abschneiden
         from sqlalchemy import text
         result = await db.execute(
             text("SELECT * FROM users WHERE id = :id"),
-            {"id": token},
+            {"id": user_id},
         )
         user = result.mappings().first()
         if not user:

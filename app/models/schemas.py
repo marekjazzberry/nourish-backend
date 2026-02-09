@@ -145,6 +145,10 @@ class UserResponse(BaseModel):
     community_opt_in: bool = False
     created_at: datetime
 
+class AuthResponse(BaseModel):
+    user: UserResponse
+    token: str
+
 
 # ── Meal Schemas ──
 
