@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.pyc
+.env
+.DS_Store
+*.xlsx
+*.pdf
+.claude/
+.git/
+tests/
+scripts/
+*.md
+!requirements.txt

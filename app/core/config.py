@@ -24,7 +24,8 @@ class Settings(BaseSettings):
     # App
     env: str = "development"
     debug: bool = True
-    cors_origins: list[str] = ["http://localhost:3000"]
+    port: int = 8000
+    cors_origins: list[str] = ["http://localhost:3000", "https://nourish-app.de", "https://api.nourish-app.de"]
 
     # Claude Modelle
     claude_model_fast: str = "claude-sonnet-4-5-20250929"  # Parsing, schnelle Aufgaben
