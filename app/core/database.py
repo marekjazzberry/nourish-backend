@@ -20,6 +20,7 @@ def _get_engine():
             echo=settings.debug,
             pool_size=10,
             max_overflow=20,
+            connect_args={"statement_cache_size": 0},
         )
     return _engine
 
