@@ -1,5 +1,6 @@
 """Nourish Backend — Datenbankverbindung (Supabase/PostgreSQL)."""
 
+import re
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.pool import NullPool
 from supabase import create_client, Client
@@ -13,17 +14,22 @@ _engine = None
 _session_factory = None
 
 
+def _make_psycopg_url(url: str) -> str:
+    """Konvertiert eine beliebige PostgreSQL-URL zum psycopg-Driver-Format."""
+    return re.sub(
+        r"^postgres(ql)?(\+\w+)?://",
+        "postgresql+psycopg://",
+        url,
+    )
+
+
 def _get_engine():
     global _engine
     if _engine is None:
         _engine = create_async_engine(
-            settings.database_url,
+            _make_psycopg_url(settings.database_url),
             echo=settings.debug,
             poolclass=NullPool,
-            connect_args={
-                "statement_cache_size": 0,
-                "prepared_statement_cache_size": 0,
-            },
         )
     return _engine
 
