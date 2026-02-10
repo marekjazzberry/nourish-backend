@@ -8,62 +8,78 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
 
-# Exakte Alias-Mappings: Kurzformen → BLS name_de (so genau wie moeglich)
+# Exakte Alias-Mappings: Kurzformen → verifizierte BLS name_de
+# Alle Namen wurden gegen die bls_foods-Tabelle geprueft (2026-02-09)
 COMMON_ALIASES: dict[str, str] = {
-    "ei": "Hühnerei Vollei roh",
-    "eier": "Hühnerei Vollei roh",
-    "spiegelei": "Hühnerei Vollei roh",
-    "rührei": "Hühnerei Vollei roh",
-    "avocado": "Avocado roh",
-    "reis": "Reis Langkorn roh",
-    "lachs": "Lachs roh",
-    "milch": "Vollmilch",
-    "butter": "Butter",
-    "käse": "Gouda",
-    "kartoffel": "Kartoffel roh",
-    "kartoffeln": "Kartoffel roh",
-    "tomate": "Tomate roh",
-    "tomaten": "Tomate roh",
-    "gurke": "Salatgurke roh",
-    "apfel": "Apfel roh",
-    "banane": "Banane roh",
-    "hähnchen": "Hähnchenbrust roh",
-    "hühnchen": "Hähnchenbrust roh",
-    "huhn": "Hähnchenbrust roh",
-    "rindfleisch": "Rindfleisch roh",
-    "spinat": "Spinat roh",
-    "brokkoli": "Brokkoli roh",
-    "möhre": "Möhre roh",
-    "möhren": "Möhre roh",
-    "karotte": "Möhre roh",
-    "karotten": "Möhre roh",
-    "zwiebel": "Zwiebel roh",
-    "olivenöl": "Olivenöl",
-    "salat": "Kopfsalat roh",
-    "brot": "Weizenmischbrot",
-    "toast": "Toastbrot",
-    "brötchen": "Weizenbrötchen",
-    "nudeln": "Nudeln Hartweizen gegart",
-    "spaghetti": "Spaghetti gegart",
-    "haferflocken": "Haferflocken",
-    "thunfisch": "Thunfisch roh",
-    "joghurt": "Joghurt",
-    "quark": "Speisequark",
-    "sahne": "Sahne",
-    "hackfleisch": "Hackfleisch roh",
-    "schinken": "Schinken",
-    "paprika": "Paprika roh",
-    "orange": "Orange roh",
-    "erdbeeren": "Erdbeere roh",
-    "blaubeeren": "Heidelbeere roh",
+    # Eier (BLS: "Hühnerei roh" — 135 kcal, 13.2g P per 100g)
+    "ei": "Hühnerei roh",
+    "eier": "Hühnerei roh",
+    "spiegelei": "Hühnerei roh",
+    "rührei": "Hühnerei roh",
+    "gekochtes ei": "Hühnerei gekocht",
+    # Obst
+    "avocado": "Avocado roh",              # 132 kcal
+    "apfel": "Apfel roh",                  # 58 kcal
+    "banane": "Banane roh",                # 79 kcal
+    "orange": "Orange roh",                # 49 kcal
+    "erdbeeren": "Erdbeere roh",           # 38 kcal
+    "erdbeere": "Erdbeere roh",
+    "blaubeeren": "Heidelbeere roh",       # 61 kcal
     "heidelbeeren": "Heidelbeere roh",
-    "mandeln": "Mandel",
-    "walnüsse": "Walnuss",
-    "linsen": "Linsen roh",
-    "kichererbsen": "Kichererbsen roh",
-    "tofu": "Tofu",
-    "rapsöl": "Rapsöl",
-    "pommes": "Pommes frites",
+    # Gemüse
+    "tomate": "Tomate roh",               # 22 kcal
+    "tomaten": "Tomate roh",
+    "gurke": "Gurke roh",                  # 16 kcal
+    "kartoffel": "Kartoffel geschält, roh",  # 83 kcal
+    "kartoffeln": "Kartoffel geschält, roh",
+    "spinat": "Spinat roh",               # 18 kcal
+    "brokkoli": "Broccoli roh",            # 35 kcal — BLS schreibt "Broccoli"!
+    "broccoli": "Broccoli roh",
+    "möhre": "Karotte/Möhre, roh",        # 40 kcal
+    "möhren": "Karotte/Möhre, roh",
+    "karotte": "Karotte/Möhre, roh",
+    "karotten": "Karotte/Möhre, roh",
+    "zwiebel": "Speisezwiebel roh",        # 34 kcal
+    "paprika": "Gemüsepaprika rot, roh",   # 36 kcal
+    "salat": "Kopfsalat roh",             # 18 kcal
+    # Fleisch & Fisch
+    "hähnchen": "Hähnchen Brustfilet, roh",  # 109 kcal, 23.2g P
+    "hühnchen": "Hähnchen Brustfilet, roh",
+    "huhn": "Hähnchen Brustfilet, roh",
+    "hähnchenbrust": "Hähnchen Brustfilet, roh",
+    "rindfleisch": "Rind Filet/Lende, roh",   # 121 kcal, 21.2g P
+    "lachs": "Lachs roh",                      # 180 kcal, 19.9g P
+    "thunfisch": "Thunfisch roh",              # 139 kcal, 22.4g P
+    "hackfleisch": "Schwein/Rind, Hackfleisch gemischt, roh",  # 250 kcal
+    "schinken": "Schwein Kochschinken, Kochpökelware",  # 130 kcal, 22.5g P
+    # Milchprodukte
+    "milch": "Vollmilch frisch, 3,5 % Fett, pasteurisiert",  # 62 kcal
+    "butter": "Süßrahmbutter",             # 747 kcal
+    "käse": "Gouda 48 % Fett i. Tr.",     # 379 kcal, 22.5g P
+    "joghurt": "Joghurt mild, mind. 3,5 % Fett",  # 67 kcal
+    "quark": "Speisequark Magerstufe, Magerquark < 10 % Fett i. Tr.",  # 66 kcal, 11.8g P
+    "magerquark": "Speisequark Magerstufe, Magerquark < 10 % Fett i. Tr.",
+    "sahne": "Schlagsahne mind. 30 % Fett",  # 308 kcal
+    # Getreide & Beilagen
+    "reis": "Reis poliert, gekocht",        # 117 kcal — gekocht ist realistischer
+    "nudeln": "Teigwaren eifrei, gekocht",  # 146 kcal
+    "spaghetti": "Teigwaren eifrei, gekocht",
+    "pasta": "Teigwaren eifrei, gekocht",
+    "brot": "Weizenmischbrot",             # 207 kcal
+    "toast": "Weizenmischtoastbrot",       # 246 kcal
+    "brötchen": "Weizenbrötchen",          # 280 kcal
+    "haferflocken": "Hafer Flocken",       # 348 kcal, 13.2g P
+    "pommes": "Pommes frites",             # 239 kcal
+    # Öle & Fette
+    "olivenöl": "Olivenöl",               # 899 kcal
+    "rapsöl": "Rapsöl/Rüböl",             # 900 kcal
+    # Hülsenfrüchte & Soja
+    "linsen": "Linse reif, gekocht",       # 119 kcal — gekocht realistischer
+    "kichererbsen": "Kichererbse reif, gekocht",  # 151 kcal
+    "tofu": "Tofu",                        # 115 kcal, 15.5g P
+    # Nüsse
+    "mandeln": "Mandel süß",              # 544 kcal
+    "walnüsse": "Walnuss",                # 721 kcal
 }
 
 
