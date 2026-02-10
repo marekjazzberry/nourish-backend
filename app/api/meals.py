@@ -10,7 +10,7 @@ from sqlalchemy import text
 from app.core.database import get_db
 from app.core.auth import get_current_user
 from app.models.schemas import (
-    VoiceInput, TextInput, PhotoInput, MealResponse, MealType, NutrientProfile,
+    VoiceInput, TextInput, PhotoInput, MealUpdate, MealResponse, MealType, NutrientProfile,
 )
 from app.services.claude_service import parse_food_input, generate_meal_feedback
 from app.services.nutrition_service import lookup_food, calculate_nutrients
@@ -359,6 +359,157 @@ async def get_meals(
         ))
 
     return meals
+
+
+@router.put("/{meal_id}", response_model=MealResponse)
+async def update_meal(
+    meal_id: str,
+    body: MealUpdate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bearbeitet eine Mahlzeit: meal_type, meal_time und/oder Items aendern."""
+
+    # 1. Bestehenden Eintrag laden + Ownership pruefen
+    result = await db.execute(
+        text("""
+            SELECT id, meal_type, input_method, raw_input, ai_feedback,
+                   ai_feedback_knowledge_links, logged_at, meal_time
+            FROM food_entries
+            WHERE id = :mid AND user_id = :uid
+        """),
+        {"mid": meal_id, "uid": user["id"]},
+    )
+    entry = result.mappings().first()
+    if not entry:
+        raise HTTPException(404, "Mahlzeit nicht gefunden")
+
+    # 2. Felder bestimmen (neu oder bestehendes beibehalten)
+    new_meal_type = body.meal_type.value if body.meal_type else entry["meal_type"]
+    new_meal_time = entry["meal_time"]
+    if body.meal_time is not None:
+        new_meal_time = _parse_meal_time(body.meal_time)
+
+    # 3. Falls neuer Text: Items komplett neu parsen
+    if body.text:
+        parsed = await parse_food_input(body.text)
+        parsed_items = parsed["items"]
+        if not parsed_items:
+            raise HTTPException(400, "Konnte keine Lebensmittel im neuen Text erkennen.")
+
+        # Alte Items loeschen
+        await db.execute(
+            text("DELETE FROM food_items WHERE food_entry_id = :eid"),
+            {"eid": entry["id"]},
+        )
+
+        # Neue Items anlegen
+        food_items = []
+        for i, item in enumerate(parsed_items):
+            food_data = await lookup_food(item["name"], db=db)
+            nutrients = None
+            normalized_grams = _normalize_grams(
+                item["name"], item["amount"], item.get("unit", "g")
+            )
+            if food_data and "nutrients_per_100" in food_data:
+                nutrients = calculate_nutrients(
+                    food_data["nutrients_per_100"], normalized_grams,
+                    food_name=f"{item['name']} (→ {food_data.get('name', '?')} via {food_data.get('source', '?')})",
+                )
+            await db.execute(
+                text("""
+                    INSERT INTO food_items (food_entry_id, name, amount, unit, normalized_grams, calculated_nutrients, sort_order)
+                    VALUES (:eid, :name, :amount, :unit, :grams, :nutrients, :order)
+                """),
+                {
+                    "eid": entry["id"], "name": item["name"],
+                    "amount": item["amount"], "unit": item.get("unit", "g"),
+                    "grams": normalized_grams,
+                    "nutrients": nutrients.model_dump_json() if nutrients else None,
+                    "order": i,
+                },
+            )
+            food_items.append({
+                "id": str(entry["id"]),
+                "name": item["name"],
+                "amount": item["amount"],
+                "unit": item.get("unit", "g"),
+                "normalized_grams": normalized_grams,
+                "calculated_nutrients": nutrients,
+            })
+
+        # Neues AI-Feedback generieren
+        daily_balance = {}
+        ai_feedback = await generate_meal_feedback(parsed_items, user, daily_balance)
+
+        # Entry updaten (inkl. raw_input und ai_feedback)
+        await db.execute(
+            text("""
+                UPDATE food_entries
+                SET meal_type = :mt, meal_time = :mtime, raw_input = :raw, ai_feedback = :fb
+                WHERE id = :eid
+            """),
+            {
+                "mt": new_meal_type, "mtime": new_meal_time,
+                "raw": body.text, "fb": ai_feedback, "eid": entry["id"],
+            },
+        )
+    else:
+        # Nur meal_type/meal_time updaten, Items beibehalten
+        await db.execute(
+            text("UPDATE food_entries SET meal_type = :mt, meal_time = :mtime WHERE id = :eid"),
+            {"mt": new_meal_type, "mtime": new_meal_time, "eid": entry["id"]},
+        )
+        ai_feedback = entry["ai_feedback"]
+
+        # Bestehende Items laden
+        items_result = await db.execute(
+            text("""
+                SELECT id, name, amount, unit, normalized_grams, calculated_nutrients
+                FROM food_items WHERE food_entry_id = :eid ORDER BY sort_order
+            """),
+            {"eid": entry["id"]},
+        )
+        food_items = []
+        for fi in items_result.mappings():
+            nutrients = fi["calculated_nutrients"]
+            if isinstance(nutrients, str):
+                nutrients = json_mod.loads(nutrients)
+            food_items.append({
+                "id": fi["id"],
+                "name": fi["name"],
+                "amount": fi["amount"],
+                "unit": fi["unit"],
+                "normalized_grams": fi["normalized_grams"],
+                "calculated_nutrients": NutrientProfile(**nutrients) if nutrients else None,
+            })
+
+    await db.commit()
+
+    # Totals berechnen
+    total_cal = sum(
+        (fi["calculated_nutrients"].calories if hasattr(fi["calculated_nutrients"], "calories") else fi["calculated_nutrients"].get("calories", 0))
+        for fi in food_items if fi["calculated_nutrients"]
+    )
+    total_prot = sum(
+        (fi["calculated_nutrients"].protein if hasattr(fi["calculated_nutrients"], "protein") else fi["calculated_nutrients"].get("protein", 0))
+        for fi in food_items if fi["calculated_nutrients"]
+    )
+
+    mt_str = new_meal_time.strftime("%H:%M") if hasattr(new_meal_time, "strftime") else str(new_meal_time)[:5] if new_meal_time else None
+
+    return MealResponse(
+        id=entry["id"],
+        meal_type=new_meal_type,
+        input_method=entry["input_method"],
+        items=food_items,
+        ai_feedback=ai_feedback,
+        ai_feedback_knowledge_links=entry["ai_feedback_knowledge_links"] or [],
+        logged_at=entry["logged_at"],
+        meal_time=mt_str,
+        total_calories=round(total_cal, 1),
+        total_protein=round(total_prot, 1),
+    )
 
 
 @router.delete("/{meal_id}")

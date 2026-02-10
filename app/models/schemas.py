@@ -179,6 +179,12 @@ class PhotoInput(BaseModel):
     photo_type: str = "meal"  # "meal" oder "label"
     meal_type: Optional[MealType] = None
 
+class MealUpdate(BaseModel):
+    meal_type: Optional[MealType] = None
+    meal_time: Optional[str] = None   # "HH:MM"
+    text: Optional[str] = None        # neuer Text → Items werden neu geparst
+
+
 class MealResponse(BaseModel):
     id: UUID
     meal_type: MealType
