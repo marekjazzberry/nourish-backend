@@ -14,7 +14,14 @@ async def search_bls(name: str, db: AsyncSession, limit: int = 5) -> list[dict]:
 
     Sucht sowohl in name_de als auch name_en.
     Ranking: hoechste Similarity zuerst, bei Gleichstand kuerzerer Name.
+
+    Fuer kurze Suchbegriffe (< 4 Zeichen) wird zusaetzlich ein ILIKE-Fallback
+    verwendet, da Trigram-Similarity bei 2-3 Zeichen oft keine Treffer liefert
+    (z.B. "Ei" → "Huehnerei", "Reis" → "Reis gekocht").
     """
+    query = name.strip()
+
+    # Trigram-Suche
     result = await db.execute(
         text("""
             SELECT bls_code, name_de, name_en, nutrients_per_100,
@@ -23,11 +30,44 @@ async def search_bls(name: str, db: AsyncSession, limit: int = 5) -> list[dict]:
                        COALESCE(similarity(name_en, :q), 0)
                    ) AS sim
             FROM bls_foods
-            WHERE name_de % :q OR name_en % :q
+            WHERE name_de %% :q OR name_en %% :q
             ORDER BY sim DESC, length(name_de) ASC
             LIMIT :lim
         """),
-        {"q": name, "lim": limit},
+        {"q": query, "lim": limit},
+    )
+    rows = [dict(row) for row in result.mappings()]
+
+    if rows:
+        return rows
+
+    # Fallback: Wortgrenze-Suche fuer kurze/exakte Begriffe
+    # Findet "Ei" in "Huehnerei", "Reis" in "Reis gekocht" etc.
+    log.info("Trigram lieferte keine Treffer fuer '%s', versuche ILIKE-Fallback", query)
+    result = await db.execute(
+        text("""
+            SELECT bls_code, name_de, name_en, nutrients_per_100,
+                   CASE
+                       WHEN name_de ILIKE :exact THEN 1.0
+                       WHEN name_de ILIKE :suffix THEN 0.9
+                       WHEN name_de ILIKE :prefix THEN 0.8
+                       WHEN name_de ILIKE :contains THEN 0.7
+                       WHEN name_en ILIKE :contains THEN 0.6
+                       ELSE 0.5
+                   END AS sim
+            FROM bls_foods
+            WHERE name_de ILIKE :contains
+               OR name_en ILIKE :contains
+            ORDER BY sim DESC, length(name_de) ASC
+            LIMIT :lim
+        """),
+        {
+            "exact": query,
+            "suffix": f"%{query}",
+            "prefix": f"{query}%",
+            "contains": f"%{query}%",
+            "lim": limit,
+        },
     )
     return [dict(row) for row in result.mappings()]
 

@@ -220,18 +220,27 @@ def calculate_deficits(
         actual_val = getattr(actual, field, 0) or 0
         target_val = getattr(target, field, 0) or 0
 
+        # Limit-Felder: weniger ist besser, 0% ist optimal
+        _limit_fields = {
+            "caffeine", "alcohol", "fat_trans",
+            "carbs_sugar", "carbs_sugar_glucose", "carbs_sugar_fructose",
+            "carbs_starch", "fat_saturated", "sodium",
+        }
+
         if target_val > 0:
             percentage = round((actual_val / target_val) * 100, 1)
         else:
-            # Zielwert = 0 (z.B. Alkohol, trans-Fette) — kein Defizit moeglich
+            # Zielwert = 0 (z.B. Alkohol, trans-Fette) — 0 ist perfekt
             percentage = 0 if actual_val == 0 else 100
 
-        # Felder mit Ziel 0 sind nie "deficit" (Alkohol, trans-Fette)
-        # Koffein ist ein Limit, kein Mindestziel — weniger ist besser
-        _limit_fields = {"caffeine", "alcohol", "fat_trans", "carbs_sugar"}
-        if target_val == 0 and actual_val == 0:
-            status = "ok"
-        elif field in _limit_fields and actual_val <= target_val:
+        if field in _limit_fields:
+            # Limit-Felder: unter oder gleich Ziel → ok, darueber → excess
+            if actual_val <= target_val:
+                status = "ok"
+            else:
+                status = "excess"
+        elif target_val == 0:
+            # Kein Zielwert definiert und kein Limit → immer ok
             status = "ok"
         elif percentage < 80:
             status = "deficit"
