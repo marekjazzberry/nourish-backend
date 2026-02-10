@@ -200,10 +200,33 @@ async def _process_meal(
     )
 
 
+def _detect_meal_type_from_text(raw_input: str) -> MealType | None:
+    """Erkennt den Mahlzeittyp aus Keywords im Text. Gibt None zurueck wenn nichts erkannt."""
+    lower = raw_input.lower()
+    breakfast_kw = ("frühstück", "morgens", "morning", "zum frühstück", "heute morgen")
+    lunch_kw = ("mittag", "mittagessen", "lunch", "zum mittag")
+    dinner_kw = ("abend", "abendessen", "abendbrot", "dinner", "zum abend")
+    snack_kw = ("snack", "zwischendurch", "zwischenmahlzeit", "nachmittags")
+
+    for kw in breakfast_kw:
+        if kw in lower:
+            return MealType.breakfast
+    for kw in lunch_kw:
+        if kw in lower:
+            return MealType.lunch
+    for kw in dinner_kw:
+        if kw in lower:
+            return MealType.dinner
+    for kw in snack_kw:
+        if kw in lower:
+            return MealType.snack
+    return None
+
+
 def _detect_meal_type() -> MealType:
-    """Erkennt den Mahlzeittyp basierend auf der Uhrzeit."""
+    """Fallback: Erkennt den Mahlzeittyp basierend auf der Uhrzeit."""
     hour = datetime.now().hour
-    if hour < 10:
+    if hour < 11:
         return MealType.breakfast
     elif hour < 14:
         return MealType.lunch
@@ -224,7 +247,7 @@ async def create_meal_voice(
     if not parsed_items:
         raise HTTPException(400, "Konnte keine Lebensmittel erkennen. Bitte nochmal versuchen.")
 
-    meal_type = body.meal_type or _detect_meal_type()
+    meal_type = body.meal_type or _detect_meal_type_from_text(body.transcript) or _detect_meal_type()
     return await _process_meal(parsed_items, meal_type, "voice", body.transcript, user, db)
 
 
@@ -239,7 +262,7 @@ async def create_meal_text(
     if not parsed_items:
         raise HTTPException(400, "Konnte keine Lebensmittel erkennen.")
 
-    meal_type = body.meal_type or _detect_meal_type()
+    meal_type = body.meal_type or _detect_meal_type_from_text(body.text) or _detect_meal_type()
     return await _process_meal(parsed_items, meal_type, "text", body.text, user, db)
 
 

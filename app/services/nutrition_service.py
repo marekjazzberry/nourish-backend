@@ -334,6 +334,25 @@ async def _throttled_search_usda(query: str, max_results: int = 10) -> list[dict
     return await search_usda(query, max_results)
 
 
+async def _log_missing_food(name: str, search_query: str, db: Optional[AsyncSession]) -> None:
+    """Speichert ein nicht-gefundenes Lebensmittel in missing_foods."""
+    if db is None:
+        return
+    try:
+        from sqlalchemy import text as sa_text
+        await db.execute(
+            sa_text("""
+                INSERT INTO missing_foods (name, search_query)
+                VALUES (:name, :query)
+                ON CONFLICT (lower(name)) WHERE NOT resolved DO NOTHING
+            """),
+            {"name": name, "query": search_query},
+        )
+        log.warning("[MISSING] Lebensmittel nicht gefunden: '%s' (query: '%s')", name, search_query)
+    except Exception as e:
+        log.error("[MISSING] Fehler beim Speichern: %s", e)
+
+
 async def lookup_food(
     name: str, db: Optional[AsyncSession] = None, barcode: Optional[str] = None,
 ) -> Optional[dict]:
@@ -342,6 +361,7 @@ async def lookup_food(
     1. Barcode → Open Food Facts (exakt)
     2. BLS 4.0 → Fuzzy-Suche (primaer, schnell, deutsche Daten)
     3. USDA → Fallback (englisch, mit Uebersetzung)
+    4. Nicht gefunden → in missing_foods loggen
     """
     # 1. Barcode-Suche (exakt)
     if barcode:
@@ -373,6 +393,8 @@ async def lookup_food(
         if best:
             return best
 
+    # 6. Nichts gefunden → in missing_foods loggen
+    await _log_missing_food(name, search_name, db)
     return None
 
 
