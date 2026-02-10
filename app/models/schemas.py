@@ -187,6 +187,7 @@ class MealResponse(BaseModel):
     ai_feedback: Optional[str]
     ai_feedback_knowledge_links: list[str] = []
     logged_at: datetime
+    meal_time: Optional[str] = None  # "HH:MM" — wann die Mahlzeit gegessen wurde
     total_calories: float = 0
     total_protein: float = 0
 

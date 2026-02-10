@@ -2,7 +2,7 @@
 
 import logging
 import json as json_mod
-from datetime import date as date_type, datetime
+from datetime import date as date_type, datetime, time as time_type
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -103,20 +103,22 @@ async def _process_meal(
     raw_input: str,
     user: dict,
     db: AsyncSession,
+    meal_time: time_type | None = None,
 ) -> MealResponse:
     """Gemeinsame Logik für alle Eingabemethoden."""
+    effective_time = meal_time or datetime.now().time().replace(second=0, microsecond=0)
 
     # 1. Mahlzeit-Eintrag erstellen
     result = await db.execute(
         text("""
-            INSERT INTO food_entries (user_id, meal_type, input_method, raw_input, meal_date)
-            VALUES (:uid, :mt, :im, :raw, :date)
+            INSERT INTO food_entries (user_id, meal_type, input_method, raw_input, meal_date, meal_time)
+            VALUES (:uid, :mt, :im, :raw, :date, :mtime)
             RETURNING id, logged_at
         """),
         {
             "uid": user["id"], "mt": meal_type.value,
             "im": input_method, "raw": raw_input,
-            "date": date_type.today(),
+            "date": date_type.today(), "mtime": effective_time,
         },
     )
     entry = result.mappings().first()
@@ -195,9 +197,21 @@ async def _process_meal(
         ai_feedback=ai_feedback,
         ai_feedback_knowledge_links=[],
         logged_at=entry["logged_at"],
+        meal_time=effective_time.strftime("%H:%M"),
         total_calories=total_cal,
         total_protein=total_prot,
     )
+
+
+def _parse_meal_time(meal_time_str: str | None) -> time_type:
+    """Parst 'HH:MM' String zu time. Fallback: aktuelle Serverzeit."""
+    if meal_time_str:
+        try:
+            parts = meal_time_str.strip().split(":")
+            return time_type(int(parts[0]), int(parts[1]))
+        except (ValueError, IndexError):
+            log.warning("[TIME] Konnte '%s' nicht parsen, nutze aktuelle Zeit", meal_time_str)
+    return datetime.now().time().replace(second=0, microsecond=0)
 
 
 def _detect_meal_type_from_text(raw_input: str) -> MealType | None:
@@ -223,17 +237,22 @@ def _detect_meal_type_from_text(raw_input: str) -> MealType | None:
     return None
 
 
-def _detect_meal_type() -> MealType:
-    """Fallback: Erkennt den Mahlzeittyp basierend auf der Uhrzeit."""
-    hour = datetime.now().hour
-    if hour < 11:
+def _detect_meal_type_from_time(meal_time: time_type) -> MealType:
+    """Leitet den Mahlzeittyp aus der Uhrzeit ab."""
+    h, m = meal_time.hour, meal_time.minute
+    minutes = h * 60 + m
+    if 300 <= minutes < 600:       # 05:00-10:00
         return MealType.breakfast
-    elif hour < 14:
-        return MealType.lunch
-    elif hour < 17:
+    elif 600 <= minutes < 690:     # 10:00-11:30
         return MealType.snack
-    else:
+    elif 690 <= minutes < 870:     # 11:30-14:30
+        return MealType.lunch
+    elif 870 <= minutes < 1020:    # 14:30-17:00
+        return MealType.snack
+    elif 1020 <= minutes < 1260:   # 17:00-21:00
         return MealType.dinner
+    else:                          # 21:00-05:00
+        return MealType.snack
 
 
 @router.post("/voice", response_model=MealResponse)
@@ -243,12 +262,14 @@ async def create_meal_voice(
     db: AsyncSession = Depends(get_db),
 ):
     """Verarbeitet Spracheingabe → Mahlzeit."""
-    parsed_items = await parse_food_input(body.transcript)
+    parsed = await parse_food_input(body.transcript)
+    parsed_items = parsed["items"]
     if not parsed_items:
         raise HTTPException(400, "Konnte keine Lebensmittel erkennen. Bitte nochmal versuchen.")
 
-    meal_type = body.meal_type or _detect_meal_type_from_text(body.transcript) or _detect_meal_type()
-    return await _process_meal(parsed_items, meal_type, "voice", body.transcript, user, db)
+    meal_time = _parse_meal_time(parsed.get("meal_time"))
+    meal_type = body.meal_type or _detect_meal_type_from_text(body.transcript) or _detect_meal_type_from_time(meal_time)
+    return await _process_meal(parsed_items, meal_type, "voice", body.transcript, user, db, meal_time=meal_time)
 
 
 @router.post("/text", response_model=MealResponse)
@@ -258,12 +279,14 @@ async def create_meal_text(
     db: AsyncSession = Depends(get_db),
 ):
     """Verarbeitet Texteingabe → Mahlzeit."""
-    parsed_items = await parse_food_input(body.text)
+    parsed = await parse_food_input(body.text)
+    parsed_items = parsed["items"]
     if not parsed_items:
         raise HTTPException(400, "Konnte keine Lebensmittel erkennen.")
 
-    meal_type = body.meal_type or _detect_meal_type_from_text(body.text) or _detect_meal_type()
-    return await _process_meal(parsed_items, meal_type, "text", body.text, user, db)
+    meal_time = _parse_meal_time(parsed.get("meal_time"))
+    meal_type = body.meal_type or _detect_meal_type_from_text(body.text) or _detect_meal_type_from_time(meal_time)
+    return await _process_meal(parsed_items, meal_type, "text", body.text, user, db, meal_time=meal_time)
 
 
 @router.get("", response_model=list[MealResponse])
@@ -279,6 +302,7 @@ async def get_meals(
         text("""
             SELECT fe.id, fe.meal_type, fe.input_method, fe.ai_feedback,
                    fe.ai_feedback_knowledge_links, fe.logged_at,
+                   fe.meal_time,
                    COALESCE(json_agg(json_build_object(
                        'id', fi.id, 'name', fi.name, 'amount', fi.amount,
                        'unit', fi.unit, 'normalized_grams', fi.normalized_grams,
@@ -288,7 +312,7 @@ async def get_meals(
             LEFT JOIN food_items fi ON fi.food_entry_id = fe.id
             WHERE fe.user_id = :uid AND fe.meal_date = :date
             GROUP BY fe.id
-            ORDER BY fe.logged_at
+            ORDER BY fe.meal_time ASC NULLS LAST, fe.logged_at ASC
         """),
         {"uid": user["id"], "date": target_date},
     )
@@ -318,6 +342,9 @@ async def get_meals(
                 "calculated_nutrients": NutrientProfile(**nutrients) if nutrients else None,
             })
 
+        mt = row["meal_time"]
+        meal_time_str = mt.strftime("%H:%M") if mt else None
+
         meals.append(MealResponse(
             id=row["id"],
             meal_type=row["meal_type"],
@@ -326,6 +353,7 @@ async def get_meals(
             ai_feedback=row["ai_feedback"],
             ai_feedback_knowledge_links=row["ai_feedback_knowledge_links"] or [],
             logged_at=row["logged_at"],
+            meal_time=meal_time_str,
             total_calories=round(total_cal, 1),
             total_protein=round(total_prot, 1),
         ))

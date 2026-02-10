@@ -13,25 +13,46 @@ client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 # System Prompts
 # ══════════════════════════════════════════════
 
-PARSING_SYSTEM_PROMPT = """Du bist der Nourish Food Parser. Deine Aufgabe: Extrahiere aus natürlicher Sprache oder Text eine strukturierte Liste von Lebensmitteln mit Mengen.
+PARSING_SYSTEM_PROMPT = """Du bist der Nourish Food Parser. Deine Aufgabe: Extrahiere aus natürlicher Sprache eine strukturierte Liste von Lebensmitteln mit Mengen und erkenne die Uhrzeit der Mahlzeit.
 
 Regeln:
-- Gib IMMER ein JSON-Array zurück, nichts anderes
+- Gib IMMER ein JSON-Objekt zurück mit "items" (Array) und "meal_time" (String oder null)
 - Jedes Item: {"name": "...", "amount": Zahl, "unit": "g|ml|Stück|Tasse|EL|TL|Handvoll|Scheibe|Portion"}
 - Schätze realistische Mengen wenn keine angegeben ("ein Apfel" → 150g, "etwas Butter" → 10g)
 - Erkenne deutsche Lebensmittelnamen und Umgangssprache
 - Bei Getränken: Standardgrößen verwenden ("Tasse Kaffee" → 200ml, "Glas Wasser" → 250ml)
 - Trenne zusammengesetzte Mahlzeiten in Einzelkomponenten
 
-Beispiel Input: "Ich hatte heute Morgen Quark mit Blaubeeren und Chiasamen, dazu zwei Kaffee mit Hafermilch"
+meal_time Regeln:
+- Explizite Uhrzeit: "um 10:20" → "10:20", "gegen 14 Uhr" → "14:00"
+- "heute morgen", "morgens", "Frühstück" → "08:00"
+- "mittags", "zum Mittag", "Mittagessen" → "12:30"
+- "nachmittags", "Snack" → "15:30"
+- "abends", "Abendessen", "Abendbrot" → "19:00"
+- Kein Zeithinweis → null
+
+Beispiel Input: "um 10:20 hatte ich Nüsse und einen Apfel"
 Beispiel Output:
-[
-  {"name": "Magerquark", "amount": 250, "unit": "g"},
-  {"name": "Blaubeeren", "amount": 80, "unit": "g"},
-  {"name": "Chiasamen", "amount": 15, "unit": "g"},
-  {"name": "Kaffee", "amount": 400, "unit": "ml"},
-  {"name": "Hafermilch", "amount": 60, "unit": "ml"}
-]"""
+{
+  "meal_time": "10:20",
+  "items": [
+    {"name": "Nüsse", "amount": 30, "unit": "g"},
+    {"name": "Apfel", "amount": 1, "unit": "Stück"}
+  ]
+}
+
+Beispiel Input: "Frühstück: Quark mit Blaubeeren und Chiasamen, dazu zwei Kaffee mit Hafermilch"
+Beispiel Output:
+{
+  "meal_time": "08:00",
+  "items": [
+    {"name": "Magerquark", "amount": 250, "unit": "g"},
+    {"name": "Blaubeeren", "amount": 80, "unit": "g"},
+    {"name": "Chiasamen", "amount": 15, "unit": "g"},
+    {"name": "Kaffee", "amount": 400, "unit": "ml"},
+    {"name": "Hafermilch", "amount": 60, "unit": "ml"}
+  ]
+}"""
 
 
 def build_feedback_prompt(user_profile: dict, daily_balance: dict) -> str:
@@ -95,8 +116,11 @@ WICHTIG: Du bist kein Arzt. Bei medizinischen Fragen empfiehl einen Arztbesuch. 
 # API Calls
 # ══════════════════════════════════════════════
 
-async def parse_food_input(text: str) -> list[dict]:
-    """Parst natürliche Sprache in strukturierte Lebensmittel-Liste."""
+async def parse_food_input(text: str) -> dict:
+    """Parst natürliche Sprache in strukturierte Lebensmittel-Liste mit optionaler Uhrzeit.
+
+    Returns: {"items": [...], "meal_time": "HH:MM" oder None}
+    """
     response = await client.messages.create(
         model=settings.claude_model_fast,
         max_tokens=1024,
@@ -111,9 +135,17 @@ async def parse_food_input(text: str) -> list[dict]:
             content = content.split("```")[1]
             if content.startswith("json"):
                 content = content[4:]
-        return json.loads(content)
+        parsed = json.loads(content)
+
+        # Abwaertskompatibilitaet: falls Claude noch ein Array liefert
+        if isinstance(parsed, list):
+            return {"items": parsed, "meal_time": None}
+        return {
+            "items": parsed.get("items", []),
+            "meal_time": parsed.get("meal_time"),
+        }
     except (json.JSONDecodeError, IndexError):
-        return []
+        return {"items": [], "meal_time": None}
 
 
 async def generate_meal_feedback(
