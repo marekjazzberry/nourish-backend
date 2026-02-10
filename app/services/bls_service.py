@@ -8,6 +8,38 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
 
+# Kurzform-Mapping: gaengige Kurzformen → besserer BLS-Suchbegriff
+# Wird VOR der Trigram-/ILIKE-Suche angewendet
+_SHORT_FORM_MAP: dict[str, str] = {
+    "ei": "Hühnerei",
+    "eier": "Hühnerei",
+    "reis": "Reis parboiled",
+    "milch": "Vollmilch",
+    "brot": "Weizenmischbrot",
+    "butter": "Butter",
+    "käse": "Gouda",
+    "lachs": "Lachs",
+    "kartoffel": "Kartoffel gegart",
+    "kartoffeln": "Kartoffel gegart",
+    "tomate": "Tomate",
+    "tomaten": "Tomate",
+    "salat": "Kopfsalat",
+    "spinat": "Spinat",
+    "brokkoli": "Brokkoli",
+    "hähnchen": "Hähnchenbrust",
+    "hühnchen": "Hähnchenbrust",
+    "thunfisch": "Thunfisch",
+    "joghurt": "Joghurt",
+    "quark": "Speisequark",
+    "nudeln": "Nudeln Hartweizen gegart",
+    "spaghetti": "Spaghetti gegart",
+    "haferflocken": "Haferflocken",
+    "apfel": "Apfel",
+    "banane": "Banane",
+    "avocado": "Avocado",
+    "olivenöl": "Olivenöl",
+}
+
 
 async def search_bls(name: str, db: AsyncSession, limit: int = 5) -> list[dict]:
     """Fuzzy-Suche in bls_foods via Trigram-Similarity.
@@ -15,11 +47,16 @@ async def search_bls(name: str, db: AsyncSession, limit: int = 5) -> list[dict]:
     Sucht sowohl in name_de als auch name_en.
     Ranking: hoechste Similarity zuerst, bei Gleichstand kuerzerer Name.
 
-    Fuer kurze Suchbegriffe (< 4 Zeichen) wird zusaetzlich ein ILIKE-Fallback
-    verwendet, da Trigram-Similarity bei 2-3 Zeichen oft keine Treffer liefert
-    (z.B. "Ei" → "Huehnerei", "Reis" → "Reis gekocht").
+    Bei kurzen Suchbegriffen und Kurzformen wird zuerst ein Mapping geprueft,
+    dann Trigram-Suche, und als Fallback ILIKE.
     """
     query = name.strip()
+
+    # Kurzform-Mapping anwenden
+    expanded = _SHORT_FORM_MAP.get(query.lower())
+    if expanded:
+        log.info("BLS Kurzform-Mapping: '%s' → '%s'", query, expanded)
+        query = expanded
 
     # Trigram-Suche
     result = await db.execute(
@@ -39,11 +76,12 @@ async def search_bls(name: str, db: AsyncSession, limit: int = 5) -> list[dict]:
     rows = [dict(row) for row in result.mappings()]
 
     if rows:
+        log.info("BLS Trigram-Treffer fuer '%s': %s (sim=%.2f)",
+                 query, rows[0]["name_de"], rows[0]["sim"])
         return rows
 
-    # Fallback: Wortgrenze-Suche fuer kurze/exakte Begriffe
-    # Findet "Ei" in "Huehnerei", "Reis" in "Reis gekocht" etc.
-    log.info("Trigram lieferte keine Treffer fuer '%s', versuche ILIKE-Fallback", query)
+    # Fallback: ILIKE fuer Begriffe die Trigram nicht findet
+    log.info("BLS Trigram ohne Treffer fuer '%s', versuche ILIKE-Fallback", query)
     result = await db.execute(
         text("""
             SELECT bls_code, name_de, name_en, nutrients_per_100,
@@ -69,7 +107,13 @@ async def search_bls(name: str, db: AsyncSession, limit: int = 5) -> list[dict]:
             "lim": limit,
         },
     )
-    return [dict(row) for row in result.mappings()]
+    rows = [dict(row) for row in result.mappings()]
+    if rows:
+        log.info("BLS ILIKE-Treffer fuer '%s': %s (sim=%.2f)",
+                 query, rows[0]["name_de"], rows[0]["sim"])
+    else:
+        log.warning("BLS kein Treffer fuer '%s'", query)
+    return rows
 
 
 async def lookup_bls(name: str, db: AsyncSession) -> Optional[dict]:
@@ -89,6 +133,10 @@ async def lookup_bls(name: str, db: AsyncSession) -> Optional[dict]:
     if isinstance(nutrients, str):
         import json
         nutrients = json.loads(nutrients)
+
+    log.info("BLS lookup '%s' → '%s' (code=%s, cal=%.0f, prot=%.1f per 100g)",
+             name, best["name_de"], best["bls_code"],
+             nutrients.get("calories", 0), nutrients.get("protein", 0))
 
     return {
         "name": best["name_de"],

@@ -55,7 +55,8 @@ async def _process_meal(
 
         if food_data and "nutrients_per_100" in food_data:
             nutrients = calculate_nutrients(
-                food_data["nutrients_per_100"], normalized_grams
+                food_data["nutrients_per_100"], normalized_grams,
+                food_name=f"{item['name']} (→ {food_data.get('name', '?')} via {food_data.get('source', '?')})",
             )
 
         await db.execute(

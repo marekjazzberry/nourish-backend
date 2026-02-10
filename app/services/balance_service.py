@@ -221,10 +221,11 @@ def calculate_deficits(
         target_val = getattr(target, field, 0) or 0
 
         # Limit-Felder: weniger ist besser, 0% ist optimal
+        # NICHT enthalten: sodium, fat_saturated (echte Zielwerte mit moeglichem Defizit)
         _limit_fields = {
             "caffeine", "alcohol", "fat_trans",
             "carbs_sugar", "carbs_sugar_glucose", "carbs_sugar_fructose",
-            "carbs_starch", "fat_saturated", "sodium",
+            "carbs_starch",
         }
 
         if target_val > 0:

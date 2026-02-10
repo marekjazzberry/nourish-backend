@@ -376,11 +376,19 @@ async def lookup_food(
     return None
 
 
-def calculate_nutrients(nutrients_per_100: dict, amount_grams: float) -> NutrientProfile:
+def calculate_nutrients(nutrients_per_100: dict, amount_grams: float, food_name: str = "") -> NutrientProfile:
     """Berechnet Nährstoffe für eine bestimmte Menge basierend auf per-100g-Werten."""
     factor = amount_grams / 100.0
     calculated = {}
     for key, value in nutrients_per_100.items():
         if isinstance(value, (int, float)):
             calculated[key] = round(value * factor, 2)
+
+    cal = calculated.get("calories", 0)
+    prot = calculated.get("protein", 0)
+    carbs = calculated.get("carbs", 0)
+    fat = calculated.get("fat", 0)
+    log.info("[CALC] %s: %.0fg → %.0f kcal, %.1fg P, %.1fg C, %.1fg F (factor=%.2f)",
+             food_name or "?", amount_grams, cal, prot, carbs, fat, factor)
+
     return NutrientProfile(**calculated)
