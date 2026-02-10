@@ -1,5 +1,6 @@
 """Nourish API — Mahlzeiten erfassen und verwalten."""
 
+import logging
 import json as json_mod
 from datetime import date as date_type, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -14,7 +15,85 @@ from app.models.schemas import (
 from app.services.claude_service import parse_food_input, generate_meal_feedback
 from app.services.nutrition_service import lookup_food, calculate_nutrients
 
+log = logging.getLogger(__name__)
 router = APIRouter()
+
+
+# ── Einheiten-Umrechnung: Stück/EL/TL/etc. → Gramm ──
+
+# Durchschnittsgewichte pro Stück (in Gramm)
+_WEIGHT_PER_PIECE: dict[str, float] = {
+    "ei": 60.0, "eier": 60.0, "hühnerei": 60.0,
+    "avocado": 150.0,
+    "apfel": 180.0, "banane": 120.0, "orange": 170.0,
+    "tomate": 120.0, "tomaten": 120.0, "cherrytomate": 15.0, "cherrytomaten": 15.0,
+    "kartoffel": 150.0, "kartoffeln": 150.0,
+    "zwiebel": 80.0, "knoblauchzehe": 4.0, "knoblauch": 4.0,
+    "paprika": 160.0,
+    "gurke": 400.0, "salatgurke": 400.0,
+    "möhre": 80.0, "karotte": 80.0, "möhren": 80.0, "karotten": 80.0,
+    "brötchen": 60.0, "scheibe brot": 50.0,
+    "kiwi": 75.0, "pfirsich": 150.0, "birne": 180.0, "pflaume": 60.0,
+    "mandarine": 70.0, "zitrone": 80.0,
+}
+
+# Generische Einheiten-Gewichte (in Gramm)
+_UNIT_GRAMS: dict[str, float] = {
+    "g": 1.0,
+    "kg": 1000.0,
+    "ml": 1.0,
+    "l": 1000.0,
+    "el": 15.0,        # Esslöffel
+    "tl": 5.0,         # Teelöffel
+    "esslöffel": 15.0,
+    "teelöffel": 5.0,
+    "tasse": 250.0,
+    "becher": 200.0,
+    "glas": 250.0,
+    "handvoll": 40.0,
+    "scheibe": 30.0,    # Brot, Käse, Wurst
+    "portion": 200.0,
+    "packung": 200.0,
+    "dose": 400.0,
+}
+
+
+def _normalize_grams(name: str, amount: float, unit: str) -> float:
+    """Rechnet Menge + Einheit in Gramm um.
+
+    Logik:
+    1. Einheit ist g/kg/ml/l → direkte Umrechnung
+    2. Einheit ist 'Stück' → Lookup im Stückgewicht-Dict
+    3. Einheit ist EL/TL/Tasse/etc. → generisches Gewicht
+    4. Fallback: amount als Gramm (wenn Einheit unbekannt)
+    """
+    unit_lower = unit.lower().strip()
+    name_lower = name.lower().strip()
+
+    # 1. Direkte metrische Einheiten
+    if unit_lower in ("g", "kg", "ml", "l"):
+        factor = _UNIT_GRAMS.get(unit_lower, 1.0)
+        grams = amount * factor
+        log.info("[UNIT] %s: %.1f %s → %.0fg (metrisch)", name, amount, unit, grams)
+        return grams
+
+    # 2. Stück → lebensmittelspezifisches Gewicht
+    if unit_lower in ("stück", "stk", "stk.", "st"):
+        piece_weight = _WEIGHT_PER_PIECE.get(name_lower, 100.0)
+        grams = amount * piece_weight
+        log.info("[UNIT] %s: %.0f Stück × %.0fg = %.0fg", name, amount, piece_weight, grams)
+        return grams
+
+    # 3. Generische Einheiten (EL, TL, Tasse, Scheibe, etc.)
+    generic = _UNIT_GRAMS.get(unit_lower)
+    if generic:
+        grams = amount * generic
+        log.info("[UNIT] %s: %.1f %s × %.0fg = %.0fg", name, amount, unit, generic, grams)
+        return grams
+
+    # 4. Fallback: Einheit unbekannt, nehme amount als Gramm
+    log.warning("[UNIT] Unbekannte Einheit '%s' fuer '%s', nehme %.0f als Gramm", unit, name, amount)
+    return amount
 
 
 async def _process_meal(
@@ -51,7 +130,9 @@ async def _process_meal(
         food_data = await lookup_food(item["name"], db=db)
 
         nutrients = None
-        normalized_grams = item["amount"]  # Vereinfachung für MVP
+        normalized_grams = _normalize_grams(
+            item["name"], item["amount"], item.get("unit", "g")
+        )
 
         if food_data and "nutrients_per_100" in food_data:
             nutrients = calculate_nutrients(
